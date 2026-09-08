@@ -1,0 +1,196 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Branch {
+  id            String           @id @default(cuid())
+  name          String
+  address       String
+  latitude      Float
+  longitude     Float
+  phone         String
+  opening_hours Json
+  is_active     Boolean          @default(true)
+  created_at    DateTime         @default(now())
+  updated_at    DateTime         @updatedAt
+
+  users             User[]
+  tables            Table[]
+  branch_menu_items BranchMenuItem[]
+  orders            Order[]
+  inventory_items   InventoryItem[]
+
+  @@map("branches")
+}
+
+model User {
+  id            String   @id @default(cuid())
+  name          String
+  email         String   @unique
+  password_hash String
+  role          String   // "employee" | "admin"
+  branch_id     String?
+  branch        Branch?  @relation(fields: [branch_id], references: [id], onDelete: SetNull)
+  is_active     Boolean  @default(true)
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  @@map("users")
+}
+
+model Table {
+  id         String   @id @default(cuid())
+  branch_id  String
+  branch     Branch   @relation(fields: [branch_id], references: [id], onDelete: Cascade)
+  label      String   // e.g. "Table 4", "Patio 2", "Bar 1"
+  is_active  Boolean  @default(true)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  orders Order[]
+
+  @@map("tables")
+}
+
+model MenuCategory {
+  id         String     @id @default(cuid())
+  name       String
+  sort_order Int        @default(0)
+  created_at DateTime   @default(now())
+  updated_at DateTime   @updatedAt
+
+  menu_items MenuItem[]
+
+  @@map("menu_categories")
+}
+
+model MenuItem {
+  id           String   @id @default(cuid())
+  category_id  String
+  category     MenuCategory @relation(fields: [category_id], references: [id], onDelete: Cascade)
+  name         String
+  description  String
+  price        Float
+  image_url    String
+  is_available Boolean  @default(true)
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  branch_menu_items BranchMenuItem[]
+  modifiers         Modifier[]
+  order_items       OrderItem[]
+
+  @@map("menu_items")
+}
+
+model BranchMenuItem {
+  id           String   @id @default(cuid())
+  branch_id    String
+  branch       Branch   @relation(fields: [branch_id], references: [id], onDelete: Cascade)
+  menu_item_id String
+  menu_item    MenuItem @relation(fields: [menu_item_id], references: [id], onDelete: Cascade)
+  is_available Boolean  @default(true)
+  stock_count  Int?     // nullable = unlimited
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  @@unique([branch_id, menu_item_id])
+  @@map("branch_menu_items")
+}
+
+model Modifier {
+  id           String   @id @default(cuid())
+  menu_item_id String
+  menu_item    MenuItem @relation(fields: [menu_item_id], references: [id], onDelete: Cascade)
+  name         String
+  price_delta  Float    @default(0.0)
+  is_required  Boolean  @default(false)
+  group_name   String   // e.g. "Size", "Add-ons", "Preparation"
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  @@map("modifiers")
+}
+
+model Order {
+  id             String      @id @default(cuid())
+  branch_id      String
+  branch         Branch      @relation(fields: [branch_id], references: [id], onDelete: Cascade)
+  order_type     String      // "dine_in_table" | "outdoor_gps" | "pickup"
+  table_id       String?
+  table          Table?      @relation(fields: [table_id], references: [id], onDelete: SetNull)
+  latitude       Float?
+  longitude      Float?
+  location_note  String?
+  customer_name  String
+  customer_phone String?
+  status         String      @default("received") // "received" | "preparing" | "ready" | "completed" | "cancelled"
+  subtotal       Float
+  total          Float
+  created_at     DateTime    @default(now())
+  updated_at     DateTime    @updatedAt
+
+  order_items OrderItem[]
+  payments    Payment[]
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id                 String   @id @default(cuid())
+  order_id           String
+  order              Order    @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  menu_item_id       String
+  menu_item          MenuItem @relation(fields: [menu_item_id], references: [id], onDelete: Restrict)
+  quantity           Int
+  unit_price         Float
+  selected_modifiers Json     // array of selected modifiers: [{ name, price_delta, group_name }]
+  notes              String?
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
+
+  @@map("order_items")
+}
+
+model InventoryItem {
+  id                String                 @id @default(cuid())
+  branch_id         String
+  branch            Branch                 @relation(fields: [branch_id], references: [id], onDelete: Cascade)
+  name              String
+  unit              String                 // "kg", "pcs", "liters", "units"
+  quantity_on_hand  Float
+  reorder_threshold Float
+  created_at        DateTime               @default(now())
+  updated_at        DateTime               @updatedAt
+
+  transactions InventoryTransaction[]
+
+  @@map("inventory_items")
+}
+
+model InventoryTransaction {
+  id                String        @id @default(cuid())
+  inventory_item_id String
+  inventory_item    InventoryItem @relation(fields: [inventory_item_id], references: [id], onDelete: Cascade)
+  change_amount     Float
+  reason            String        // "restock" | "order_deduction" | "waste" | "manual_adjustment"
+  created_at        DateTime      @default(now())
+
+  @@map("inventory_transactions")
+}
+
+model Payment {
+  id       String   @id @default(cuid())
+  order_id String
+  order    Order    @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  method   String   // "cash" | "card" | "other"
+  amount   Float
+  paid_at  DateTime @default(now())
+
+  @@map("payments")
+}

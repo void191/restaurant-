@@ -1,0 +1,51 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-ink: #211C1A;
+  --color-paper: #EFE8DA;
+  --color-paper-dim: #E3DBC9;
+  --color-ember: #C1432E;
+  --color-sage: #4C6B54;
+  --color-sage-dim: #DCE5DC;
+  --color-amber: #C8912B;
+  --color-muted: #8B7E6A;
+  --color-white: #FCFAF5;
+}
+
+body {
+  background-color: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-inter), system-ui, -apple-system, sans-serif;
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Torn/perforated ticket top edge effect */
+.ticket-torn-top {
+  position: relative;
+  background: #FCFAF5;
+}
+
+.ticket-torn-top::before {
+  content: '';
+  position: absolute;
+  top: -6px;
+  left: 0;
+  right: 0;
+  height: 6px;
+  background-size: 12px 6px;
+  background-repeat: repeat-x;
+  background-image: radial-gradient(circle at 6px 0, transparent 4px, #FCFAF5 4.5px);
+}
+
+/* Custom scrollbar for horizontal categories */
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
