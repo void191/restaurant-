@@ -9,11 +9,9 @@ const remoteUrl = process.argv[2] || 'https://github.com/void191/restaurant-.git
 async function main() {
   console.log('Target Remote:', remoteUrl);
 
-  try {
-    await git.init({ fs, dir });
-  } catch (e) {}
+  await git.init({ fs, dir });
 
-  console.log('Staging files...');
+  console.log('Staging files (respecting .gitignore)...');
   const files = await git.statusMatrix({ fs, dir });
   
   for (const [filepath, head, workdir, stage] of files) {
@@ -27,55 +25,34 @@ async function main() {
   }
 
   console.log('Committing changes...');
-  try {
-    const sha = await git.commit({
-      fs,
-      dir,
-      author: {
-        name: 'Antigravity Agent',
-        email: 'agent@antigravity.dev',
-      },
-      message: 'feat: Multi-Role Restaurant Ordering System with real-time ticket rail and location capture',
-    });
-    console.log('Committed commit SHA:', sha);
-  } catch (e) {
-    console.log('Commit note:', e.message);
-  }
+  const sha = await git.commit({
+    fs,
+    dir,
+    author: {
+      name: 'Antigravity Agent',
+      email: 'agent@antigravity.dev',
+    },
+    message: 'feat: Complete Restaurant Ordering System with Electron Desktop App & Windows Setup Installer',
+  });
+  console.log('Committed commit SHA:', sha);
 
-  // Create/switch to main branch
   try {
     await git.branch({ fs, dir, ref: 'main', checkout: true });
-  } catch (e) {
-    // If already exists
-  }
+  } catch (e) {}
 
-  // Set remote
-  try {
-    await git.addRemote({ fs, dir, remote: 'origin', url: remoteUrl });
-  } catch {
-    await git.deleteRemote({ fs, dir, remote: 'origin' }).catch(() => {});
-    await git.addRemote({ fs, dir, remote: 'origin', url: remoteUrl });
-  }
-
-  const currentBranch = (await git.currentBranch({ fs, dir })) || 'main';
-  console.log(`Current branch: ${currentBranch}`);
-  console.log(`Pushing ${currentBranch} to ${remoteUrl}...`);
+  await git.addRemote({ fs, dir, remote: 'origin', url: remoteUrl });
 
   const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
 
+  console.log('Pushing to GitHub with force flag...');
   const pushResult = await git.push({
     fs,
     http,
     dir,
     remote: 'origin',
-    ref: currentBranch,
+    ref: 'main',
     force: true,
-    onAuth: () => {
-      if (token) {
-        return { username: token, password: '' };
-      }
-      return undefined;
-    },
+    onAuth: () => ({ username: token, password: '' }),
   });
 
   console.log('Push Result:', pushResult);
