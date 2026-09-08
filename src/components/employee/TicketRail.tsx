@@ -1,87 +1,82 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { io } from 'socket.io-client';
-import {
-  Bell,
-  Volume2,
-  VolumeX,
-  LogOut,
-  RefreshCw,
-  Clock,
-  Radio,
-  Sparkles,
-} from 'lucide-react';
-import TicketCard, { TicketOrder } from './TicketCard';
+import { io, Socket } from 'socket.io-client';
+import { ChefHat, Volume2, VolumeX, RefreshCw, LogOut, BellRing } from 'lucide-react';
+import TicketCard, { OrderData } from './TicketCard';
 
-interface UserSession {
+export interface UserSession {
   id: string;
   name: string;
   email: string;
   role: string;
   branch_id?: string | null;
-  branch?: { id: string; name: string } | null;
+  branch?: {
+    id: string;
+    name: string;
+  } | null;
 }
 
-interface TicketRailProps {
+export interface TicketRailProps {
   user: UserSession;
-  onLogout: () => void;
-  branchOverrideId?: string; // For admin viewing specific branch
+  onLogout?: () => void;
+  branchOverrideId?: string;
 }
 
-export default function TicketRail({
-  user,
-  onLogout,
-  branchOverrideId,
-}: TicketRailProps) {
-  const branchId = branchOverrideId || user.branch_id || user.branch?.id;
-  const [orders, setOrders] = useState<TicketOrder[]>([]);
+export default function TicketRail({ user, onLogout, branchOverrideId }: TicketRailProps) {
+  const [orders, setOrders] = useState<OrderData[]>([]);
   const [loading, setLoading] = useState(true);
-  const [updatingIds, setUpdatingIds] = useState<Record<string, boolean>>({});
-  const [audioEnabled, setAudioEnabled] = useState(true);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [updatingOrderId, setUpdatingOrderId] = useState<string | null>(null);
   const [newOrderAlert, setNewOrderAlert] = useState<string | null>(null);
 
-  // Audio synthesizer for kitchen chime
-  const playChime = () => {
-    if (!audioEnabled) return;
-    try {
-      const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioContext) return;
-      const ctx = new AudioContext();
+  const socketRef = useRef<Socket | null>(null);
+  const effectiveBranchId = branchOverrideId || user.branch_id;
 
-      // Ding (Higher pitch)
+  // Play synthetic kitchen chime tone using Web Audio API
+  const playKitchenChime = () => {
+    if (!soundEnabled || typeof window === 'undefined') return;
+
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+
+      // Dual tone pleasant chime (E5 -> G#5)
+      const now = ctx.currentTime;
+
       const osc1 = ctx.createOscillator();
       const gain1 = ctx.createGain();
       osc1.type = 'sine';
-      osc1.frequency.setValueAtTime(880, ctx.currentTime); // A5
-      gain1.gain.setValueAtTime(0.3, ctx.currentTime);
-      gain1.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.8);
+      osc1.frequency.setValueAtTime(659.25, now);
+      gain1.gain.setValueAtTime(0.3, now);
+      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
       osc1.connect(gain1);
       gain1.connect(ctx.destination);
-      osc1.start();
-      osc1.stop(ctx.currentTime + 0.8);
 
-      // Dong (Lower pitch)
       const osc2 = ctx.createOscillator();
       const gain2 = ctx.createGain();
-      osc2.type = 'sine';
-      osc2.frequency.setValueAtTime(659.25, ctx.currentTime + 0.15); // E5
-      gain2.gain.setValueAtTime(0.3, ctx.currentTime + 0.15);
-      gain2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.2);
+      osc2.type = 'triangle';
+      osc2.frequency.setValueAtTime(830.61, now + 0.15);
+      gain2.gain.setValueAtTime(0.35, now + 0.15);
+      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.9);
       osc2.connect(gain2);
       gain2.connect(ctx.destination);
-      osc2.start(ctx.currentTime + 0.15);
-      osc2.stop(ctx.currentTime + 1.2);
-    } catch (e) {
-      console.log('Audio playback error (user interaction required):', e);
+
+      osc1.start(now);
+      osc1.stop(now + 0.6);
+      osc2.start(now + 0.15);
+      osc2.stop(now + 0.9);
+    } catch (err) {
+      console.error('Failed to play kitchen audio chime:', err);
     }
   };
 
-  // Fetch active queue orders from API
-  const fetchOrders = async () => {
+  // Fetch active branch orders from server
+  const fetchBranchOrders = async () => {
     try {
-      const url = branchId
-        ? `/api/employee/orders?branch_id=${branchId}`
+      const url = effectiveBranchId
+        ? `/api/employee/orders?branch_id=${effectiveBranchId}`
         : '/api/employee/orders';
       const res = await fetch(url);
       if (res.ok) {
@@ -89,67 +84,15 @@ export default function TicketRail({
         setOrders(data.orders || []);
       }
     } catch (err) {
-      console.error('Error fetching employee queue orders:', err);
+      console.error('Error fetching live employee orders:', err);
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    fetchOrders();
-
-    // WebSocket connection for live order updates
-    const socketUrl = process.env.NEXT_PUBLIC_WS_URL || window.location.origin;
-    const socket = io(socketUrl, {
-      transports: ['websocket', 'polling'],
-      reconnectionAttempts: 10,
-    });
-
-    socket.on('connect', () => {
-      if (branchId) {
-        socket.emit('join_branch', { branch_id: branchId });
-      }
-    });
-
-    // New order arrives in real time
-    socket.on('new_order', (newOrder: TicketOrder) => {
-      if (!branchId || newOrder.branch_id === branchId) {
-        setOrders((prev) => {
-          if (prev.some((o) => o.id === newOrder.id)) return prev;
-          return [newOrder, ...prev];
-        });
-
-        // Audible and visible notification per Section 6
-        playChime();
-        setNewOrderAlert(`New Order #${newOrder.id.slice(-6).toUpperCase()} by ${newOrder.customer_name}!`);
-        setTimeout(() => setNewOrderAlert(null), 6000);
-      }
-    });
-
-    // Order status updated
-    socket.on('order_status_updated', (updatedOrder: TicketOrder) => {
-      if (!branchId || updatedOrder.branch_id === branchId) {
-        setOrders((prev) => {
-          if (updatedOrder.status === 'completed' || updatedOrder.status === 'cancelled') {
-            return prev.filter((o) => o.id !== updatedOrder.id);
-          }
-          return prev.map((o) => (o.id === updatedOrder.id ? updatedOrder : o));
-        });
-      }
-    });
-
-    // Periodic polling fallback
-    const interval = setInterval(fetchOrders, 6000);
-
-    return () => {
-      socket.disconnect();
-      clearInterval(interval);
-    };
-  }, [branchId]);
-
-  // Handle status advance
+  // Advance order status
   const handleAdvanceStatus = async (orderId: string, nextStatus: string) => {
-    setUpdatingIds((prev) => ({ ...prev, [orderId]: true }));
+    setUpdatingOrderId(orderId);
     try {
       const res = await fetch(`/api/employee/orders/${orderId}/status`, {
         method: 'PATCH',
@@ -158,170 +101,271 @@ export default function TicketRail({
       });
 
       if (res.ok) {
-        const data = await res.json();
-        const updated = data.order;
-        setOrders((prev) => {
-          if (nextStatus === 'completed' || nextStatus === 'cancelled') {
-            return prev.filter((o) => o.id !== orderId);
-          }
-          return prev.map((o) => (o.id === orderId ? updated : o));
-        });
+        const { order: updated } = await res.json();
+        if (updated.status === 'completed' || updated.status === 'cancelled') {
+          setOrders((prev) => prev.filter((o) => o.id !== orderId));
+        } else {
+          setOrders((prev) =>
+            prev.map((o) => (o.id === orderId ? { ...o, status: updated.status } : o))
+          );
+        }
       }
     } catch (err) {
-      console.error('Error updating order status:', err);
+      console.error('Error advancing order status:', err);
     } finally {
-      setUpdatingIds((prev) => ({ ...prev, [orderId]: false }));
+      setUpdatingOrderId(null);
     }
   };
 
-  // Group orders into 3 columns per Section 9.4
+  // Setup WebSocket connection and room subscription (Section 6 & 8)
+  useEffect(() => {
+    fetchBranchOrders();
+
+    const wsUrl = process.env.NEXT_PUBLIC_WS_URL || window.location.origin;
+    const socket = io(wsUrl);
+    socketRef.current = socket;
+
+    socket.on('connect', () => {
+      if (effectiveBranchId) {
+        socket.emit('join_branch', { branch_id: effectiveBranchId });
+      }
+    });
+
+    // Handle new incoming order
+    socket.on('new_order', (newOrder: OrderData) => {
+      if (effectiveBranchId && newOrder.branch_id !== effectiveBranchId) return;
+
+      setOrders((prev) => {
+        const exists = prev.some((o) => o.id === newOrder.id);
+        if (exists) return prev;
+        return [newOrder, ...prev];
+      });
+
+      // Play audio chime
+      playKitchenChime();
+
+      // Native Windows Desktop Notification if running in Electron
+      if (typeof window !== 'undefined' && (window as any).electronAPI?.showNotification) {
+        const loc =
+          newOrder.order_type === 'dine_in_table'
+            ? newOrder.table?.label || 'Table'
+            : newOrder.order_type === 'outdoor_gps'
+            ? 'Outdoor GPS'
+            : 'Pickup';
+
+        (window as any).electronAPI.showNotification(
+          `🔔 New Order #${newOrder.id.slice(-6).toUpperCase()}`,
+          `${newOrder.customer_name} · ${loc} · $${newOrder.total.toFixed(2)}`
+        );
+      }
+
+      setNewOrderAlert(`New Order #${newOrder.id.slice(-6).toUpperCase()} received!`);
+      setTimeout(() => setNewOrderAlert(null), 5000);
+    });
+
+    // Handle order status update
+    socket.on('order_status_updated', (updatedOrder: OrderData) => {
+      if (effectiveBranchId && updatedOrder.branch_id !== effectiveBranchId) return;
+
+      if (updatedOrder.status === 'completed' || updatedOrder.status === 'cancelled') {
+        setOrders((prev) => prev.filter((o) => o.id !== updatedOrder.id));
+      } else {
+        setOrders((prev) =>
+          prev.map((o) => (o.id === updatedOrder.id ? { ...o, status: updatedOrder.status } : o))
+        );
+      }
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, [effectiveBranchId, soundEnabled]);
+
+  // Group orders into 3 columns (Section 6 & 9.4)
   const receivedOrders = orders.filter((o) => o.status === 'received');
   const preparingOrders = orders.filter((o) => o.status === 'preparing');
   const readyOrders = orders.filter((o) => o.status === 'ready');
 
-  const columns = [
-    {
-      id: 'received',
-      title: 'Received',
-      dotColor: 'bg-muted',
-      borderColor: 'border-muted/30',
-      orders: receivedOrders,
-    },
-    {
-      id: 'preparing',
-      title: 'Preparing',
-      dotColor: 'bg-amber',
-      borderColor: 'border-amber/30',
-      orders: preparingOrders,
-    },
-    {
-      id: 'ready',
-      title: 'Ready for Service',
-      dotColor: 'bg-sage',
-      borderColor: 'border-sage/30',
-      orders: readyOrders,
-    },
-  ];
-
   return (
     <div className="min-h-screen bg-paper flex flex-col font-sans">
-      {/* Top Header Bar */}
-      <header className="bg-ink text-white px-6 py-4 border-b border-black/20 flex items-center justify-between shadow-md">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <span className="w-3 h-3 rounded-full bg-emerald-400 animate-pulse" />
-            <h1 className="font-serif text-xl sm:text-2xl font-bold tracking-wide">
-              Kitchen Ticket Rail
-            </h1>
-          </div>
-          <span className="hidden sm:inline-block px-2.5 py-1 rounded bg-white/10 text-xs font-mono text-paper-dim">
-            {user.branch?.name || 'Assigned Branch'}
-          </span>
-        </div>
-
-        {/* Right controls */}
-        <div className="flex items-center gap-3">
-          {/* Audio Chime Toggle */}
-          <button
-            onClick={() => {
-              setAudioEnabled(!audioEnabled);
-              if (!audioEnabled) playChime();
-            }}
-            className={`p-2 rounded-lg text-xs font-mono flex items-center gap-1.5 transition-colors ${
-              audioEnabled ? 'bg-white/15 text-white' : 'bg-white/5 text-muted'
-            }`}
-            title={audioEnabled ? 'Sound alert enabled' : 'Sound alert muted'}
-          >
-            {audioEnabled ? <Volume2 className="w-4 h-4 text-emerald-400" /> : <VolumeX className="w-4 h-4" />}
-            <span className="hidden md:inline">{audioEnabled ? 'Audio On' : 'Muted'}</span>
-          </button>
-
-          {/* Refresh button */}
-          <button
-            onClick={fetchOrders}
-            className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors"
-            aria-label="Refresh orders"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          </button>
-
-          {/* Staff profile & Logout */}
-          <div className="flex items-center gap-3 pl-3 border-l border-white/20">
-            <div className="text-right hidden sm:block">
-              <p className="text-xs font-semibold leading-tight">{user.name}</p>
-              <p className="text-[10px] font-mono text-paper-dim/70 uppercase">
-                {user.role}
+      {/* Top Employee Station Bar (Only when standalone) */}
+      {onLogout && (
+        <header className="px-6 py-3.5 bg-ink text-white shadow-md flex items-center justify-between sticky top-0 z-30">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-ember flex items-center justify-center font-bold text-white shadow-sm">
+              <ChefHat className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="font-serif text-lg font-bold tracking-tight">
+                  Kitchen Ticket Rail
+                </h1>
+                <span className="text-[11px] font-mono bg-white/10 px-2 py-0.5 rounded-full text-paper-dim border border-white/10">
+                  {user.branch?.name || 'Assigned Branch'}
+                </span>
+              </div>
+              <p className="text-xs text-muted font-mono">
+                Staff: {user.name} ({user.email})
               </p>
             </div>
+          </div>
+
+          {/* Right Station Controls */}
+          <div className="flex items-center gap-3">
+            {/* Audio Chime Toggle */}
+            <button
+              onClick={() => setSoundEnabled(!soundEnabled)}
+              className={`p-2 rounded-xl border text-xs font-medium flex items-center gap-1.5 transition-all ${
+                soundEnabled
+                  ? 'bg-white/10 border-white/20 text-white hover:bg-white/20'
+                  : 'bg-white/5 border-white/10 text-muted hover:text-white'
+              }`}
+              title={soundEnabled ? 'Chime alerts enabled' : 'Chime alerts muted'}
+            >
+              {soundEnabled ? (
+                <>
+                  <Volume2 className="w-4 h-4 text-sage" />
+                  <span className="hidden sm:inline">Chime On</span>
+                </>
+              ) : (
+                <>
+                  <VolumeX className="w-4 h-4 text-muted" />
+                  <span className="hidden sm:inline">Muted</span>
+                </>
+              )}
+            </button>
+
+            {/* Refresh Queue Button */}
+            <button
+              onClick={fetchBranchOrders}
+              className="p-2 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-white transition-all text-xs flex items-center gap-1.5"
+              title="Refresh Live Queue"
+            >
+              <RefreshCw className="w-4 h-4" />
+              <span className="hidden sm:inline">Refresh</span>
+            </button>
+
+            {/* Logout Button */}
             <button
               onClick={onLogout}
-              className="p-2 rounded-lg bg-ember/90 hover:bg-ember text-white transition-colors flex items-center gap-1 text-xs font-mono"
-              title="Logout session"
+              className="p-2 rounded-xl bg-ember/20 hover:bg-ember text-white border border-ember/30 transition-all text-xs flex items-center gap-1.5"
+              title="Sign out from Counter Station"
             >
               <LogOut className="w-4 h-4" />
-              <span className="hidden sm:inline">Logout</span>
+              <span className="hidden sm:inline">Sign Out</span>
             </button>
           </div>
-        </div>
-      </header>
+        </header>
+      )}
 
-      {/* Visible Real-time New Order Banner (Section 6) */}
+      {/* Visual New Order Alert Banner */}
       {newOrderAlert && (
-        <div className="bg-ember text-white px-6 py-3 font-mono text-sm font-bold flex items-center justify-between animate-slideDown shadow-md">
+        <div className="bg-ember text-white px-6 py-2.5 flex items-center justify-between text-xs font-mono font-semibold shadow-lg animate-bounce z-20">
           <div className="flex items-center gap-2">
-            <Bell className="w-5 h-5 animate-bounce" />
-            <span>🔔 {newOrderAlert}</span>
+            <BellRing className="w-4 h-4" />
+            <span>{newOrderAlert}</span>
           </div>
           <button
             onClick={() => setNewOrderAlert(null)}
-            className="text-xs underline hover:opacity-80"
+            className="text-white/80 hover:text-white"
           >
-            Dismiss
+            ✕
           </button>
         </div>
       )}
 
-      {/* Main 3-Column Ticket Rail per Section 9.4 */}
+      {/* Main 3-Column Ticket Rail (Section 6 & 9.4) */}
       <main className="flex-1 p-4 sm:p-6 overflow-x-auto">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 min-w-[768px]">
-          {columns.map((col) => (
-            <div
-              key={col.id}
-              className="bg-paper-dim/40 rounded-2xl p-4 border border-paper-dim flex flex-col max-h-[calc(100vh-140px)]"
-            >
-              {/* Column Header per Section 9.4 */}
-              <div className="flex items-center justify-between mb-4 pb-3 border-b border-paper-dim px-1">
-                <div className="flex items-center gap-2">
-                  <span className={`w-3 h-3 rounded-full ${col.dotColor}`} />
-                  <h2 className="font-serif text-lg font-bold text-ink">
-                    {col.title}
-                  </h2>
-                </div>
-                {/* Live Count */}
-                <span className="font-mono text-xs font-bold px-2.5 py-1 rounded-full bg-white text-ink border border-paper-dim shadow-sm">
-                  {col.orders.length}
-                </span>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-7xl mx-auto min-w-[320px]">
+          {/* Column 1: Received */}
+          <div className="flex flex-col space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b-2 border-muted/30">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-muted" />
+                <h2 className="font-serif text-lg font-bold text-ink">Received</h2>
               </div>
-
-              {/* Column Ticket Cards Scrollable */}
-              <div className="space-y-4 overflow-y-auto pr-1 flex-1">
-                {col.orders.length === 0 ? (
-                  <div className="text-center py-16 text-muted font-mono text-xs border-2 border-dashed border-paper-dim rounded-xl">
-                    No orders {col.title.toLowerCase()}
-                  </div>
-                ) : (
-                  col.orders.map((order) => (
-                    <TicketCard
-                      key={order.id}
-                      order={order}
-                      onAdvanceStatus={handleAdvanceStatus}
-                      isUpdating={updatingIds[order.id]}
-                    />
-                  ))
-                )}
-              </div>
+              <span className="font-mono text-xs font-bold px-2 py-0.5 rounded-full bg-paper-dim text-ink border border-paper-dim">
+                {receivedOrders.length}
+              </span>
             </div>
-          ))}
+
+            <div className="space-y-4 flex-1">
+              {receivedOrders.length === 0 ? (
+                <div className="p-8 text-center rounded-2xl border-2 border-dashed border-paper-dim text-muted text-xs font-mono">
+                  No orders waiting to prepare
+                </div>
+              ) : (
+                receivedOrders.map((order) => (
+                  <TicketCard
+                    key={order.id}
+                    order={order}
+                    onAdvanceStatus={handleAdvanceStatus}
+                    isUpdating={updatingOrderId === order.id}
+                  />
+                ))
+              )}
+            </div>
+          </div>
+
+          {/* Column 2: Preparing */}
+          <div className="flex flex-col space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b-2 border-amber/50">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber" />
+                <h2 className="font-serif text-lg font-bold text-ink">Preparing</h2>
+              </div>
+              <span className="font-mono text-xs font-bold px-2 py-0.5 rounded-full bg-amber/10 text-amber border border-amber/20">
+                {preparingOrders.length}
+              </span>
+            </div>
+
+            <div className="space-y-4 flex-1">
+              {preparingOrders.length === 0 ? (
+                <div className="p-8 text-center rounded-2xl border-2 border-dashed border-paper-dim text-muted text-xs font-mono">
+                  No tickets currently on the grill
+                </div>
+              ) : (
+                preparingOrders.map((order) => (
+                  <TicketCard
+                    key={order.id}
+                    order={order}
+                    onAdvanceStatus={handleAdvanceStatus}
+                    isUpdating={updatingOrderId === order.id}
+                  />
+                ))
+              )}
+            </div>
+          </div>
+
+          {/* Column 3: Ready for Service */}
+          <div className="flex flex-col space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b-2 border-sage/50">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-sage" />
+                <h2 className="font-serif text-lg font-bold text-ink">Ready for Service</h2>
+              </div>
+              <span className="font-mono text-xs font-bold px-2 py-0.5 rounded-full bg-sage-dim text-sage border border-sage/20">
+                {readyOrders.length}
+              </span>
+            </div>
+
+            <div className="space-y-4 flex-1">
+              {readyOrders.length === 0 ? (
+                <div className="p-8 text-center rounded-2xl border-2 border-dashed border-paper-dim text-muted text-xs font-mono">
+                  No orders waiting for runner / pickup
+                </div>
+              ) : (
+                readyOrders.map((order) => (
+                  <TicketCard
+                    key={order.id}
+                    order={order}
+                    onAdvanceStatus={handleAdvanceStatus}
+                    isUpdating={updatingOrderId === order.id}
+                  />
+                ))
+              )}
+            </div>
+          </div>
         </div>
       </main>
     </div>

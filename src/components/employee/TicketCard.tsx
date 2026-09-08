@@ -1,39 +1,49 @@
 'use client';
 
 import React from 'react';
-import { Clock, MapPin, Utensils, ShoppingBag, ArrowRight } from 'lucide-react';
+import { Clock, MapPin, Table2, User, Phone, CheckCircle2, ChevronRight, Printer } from 'lucide-react';
 
-interface OrderItemData {
+export interface OrderItemModifier {
+  name: string;
+  price_delta: number;
+  group_name?: string;
+}
+
+export interface OrderItemData {
   id: string;
+  menu_item_id: string;
   quantity: number;
   unit_price: number;
-  selected_modifiers?: Array<{ name: string; price_delta: number }>;
+  selected_modifiers: OrderItemModifier[];
   notes?: string | null;
-  menu_item: {
+  menu_item?: {
     name: string;
+    price: number;
   };
 }
 
-export interface TicketOrder {
+export interface OrderData {
   id: string;
   branch_id: string;
   order_type: 'dine_in_table' | 'outdoor_gps' | 'pickup';
-  table_id: string | null;
-  table?: { label: string } | null;
-  latitude: number | null;
-  longitude: number | null;
-  location_note: string | null;
+  table_id?: string | null;
+  table?: {
+    label: string;
+  } | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  location_note?: string | null;
   customer_name: string;
-  customer_phone: string | null;
+  customer_phone?: string | null;
   status: 'received' | 'preparing' | 'ready' | 'completed' | 'cancelled';
-  subtotal: number;
   total: number;
+  subtotal: number;
   created_at: string;
   order_items: OrderItemData[];
 }
 
 interface TicketCardProps {
-  order: TicketOrder;
+  order: OrderData;
   onAdvanceStatus: (orderId: string, nextStatus: string) => void;
   isUpdating?: boolean;
 }
@@ -41,195 +51,266 @@ interface TicketCardProps {
 export default function TicketCard({
   order,
   onAdvanceStatus,
-  isUpdating,
+  isUpdating = false,
 }: TicketCardProps) {
-  // Compute elapsed time in minutes/hours
-  const createdDate = new Date(order.created_at);
-  const now = new Date();
-  const diffMinutes = Math.max(0, Math.floor((now.getTime() - createdDate.getTime()) / 60000));
-  const timeFormatted =
-    diffMinutes < 60
-      ? `${diffMinutes}m ago`
-      : `${Math.floor(diffMinutes / 60)}h ${diffMinutes % 60}m ago`;
+  // Format elapsed time
+  const formatElapsed = (dateStr: string) => {
+    const elapsedMs = Date.now() - new Date(dateStr).getTime();
+    const elapsedMins = Math.max(0, Math.floor(elapsedMs / 60000));
+    if (elapsedMins < 1) return 'Just now';
+    if (elapsedMins < 60) return `${elapsedMins}m ago`;
+    const hrs = Math.floor(elapsedMins / 60);
+    const mins = elapsedMins % 60;
+    return `${hrs}h ${mins}m ago`;
+  };
 
-  // Determine next status and button styling per Section 9.4
-  let nextStatus = '';
-  let buttonLabel = '';
-  let buttonClass = '';
+  const nextStatusConfig = {
+    received: {
+      next: 'preparing',
+      label: 'Start Preparing',
+      color: 'bg-ink hover:bg-ink/90 text-white',
+    },
+    preparing: {
+      next: 'ready',
+      label: 'Mark Ready for Service',
+      color: 'bg-amber hover:bg-amber/90 text-white',
+    },
+    ready: {
+      next: 'completed',
+      label: 'Mark Completed',
+      color: 'bg-sage hover:bg-sage/90 text-white',
+    },
+    completed: null,
+    cancelled: null,
+  };
 
-  if (order.status === 'received') {
-    nextStatus = 'preparing';
-    buttonLabel = 'Start preparing';
-    buttonClass = 'bg-ink text-white hover:bg-ink/90';
-  } else if (order.status === 'preparing') {
-    nextStatus = 'ready';
-    buttonLabel = 'Mark ready';
-    buttonClass = 'bg-amber text-white hover:bg-amber/90';
-  } else if (order.status === 'ready') {
-    nextStatus = 'completed';
-    buttonLabel = 'Mark completed';
-    buttonClass = 'bg-sage text-white hover:bg-sage/90';
-  }
+  const currentAction = nextStatusConfig[order.status];
 
-  // Location Visual per Section 9.4
-  const renderLocationBadge = () => {
-    if (order.order_type === 'dine_in_table') {
-      // Small pill badge only (sage-dim background, table label)
-      return (
-        <div className="inline-flex items-center gap-1.5 bg-sage-dim text-sage px-3 py-1.5 rounded-lg text-xs font-mono font-bold">
-          <Utensils className="w-3.5 h-3.5" />
-          <span>{order.table?.label || 'Dine-in Table'}</span>
-        </div>
-      );
-    }
-
-    if (order.order_type === 'outdoor_gps') {
-      // Small map thumbnail directly above the location pill per Section 9.4
-      return (
-        <div className="space-y-1.5">
-          {/* Stylized Pin-on-grid Map Thumbnail */}
-          <div className="relative h-20 w-full bg-[#E5E0D8] rounded-lg overflow-hidden border border-paper-dim flex items-center justify-center">
-            {/* Grid lines pattern */}
-            <div
-              className="absolute inset-0 opacity-20"
-              style={{
-                backgroundImage:
-                  'linear-gradient(to right, #211C1A 1px, transparent 1px), linear-gradient(to bottom, #211C1A 1px, transparent 1px)',
-                backgroundSize: '16px 16px',
-              }}
-            />
-            {/* Compass / Street layout aesthetic */}
-            <div className="absolute top-1 right-2 text-[9px] font-mono text-muted uppercase">
-              GPS AREA
-            </div>
-            <div className="relative z-10 flex flex-col items-center">
-              <div className="p-1.5 rounded-full bg-ember text-white shadow-md animate-bounce">
-                <MapPin className="w-4 h-4" />
-              </div>
-              <span className="text-[10px] font-mono font-bold text-ink bg-white/90 px-1.5 py-0.5 rounded mt-0.5 shadow-sm">
-                OUTDOOR WALK
-              </span>
-            </div>
+  // Print Kitchen Ticket
+  const handlePrintTicket = () => {
+    const ticketHtml = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Order #${order.id.slice(-6).toUpperCase()}</title>
+        <style>
+          body { font-family: monospace; padding: 20px; max-width: 300px; margin: 0 auto; }
+          h2, h3 { margin: 4px 0; text-align: center; }
+          .divider { border-top: 1px dashed #000; margin: 10px 0; }
+          .item { display: flex; justify-content: space-between; margin: 6px 0; }
+          .note { color: #C1432E; font-size: 12px; margin-left: 10px; }
+          .footer { text-align: center; font-size: 11px; margin-top: 15px; }
+        </style>
+      </head>
+      <body>
+        <h2>ARTISAN KITCHEN</h2>
+        <h3>Order #${order.id.slice(-6).toUpperCase()}</h3>
+        <p style="text-align:center; font-size:12px;">${new Date(order.created_at).toLocaleTimeString()}</p>
+        <div class="divider"></div>
+        <p><strong>Customer:</strong> ${order.customer_name}</p>
+        <p><strong>Type:</strong> ${order.order_type.toUpperCase()}</p>
+        ${order.table ? `<p><strong>Location:</strong> ${order.table.label}</p>` : ''}
+        ${order.location_note ? `<p><strong>Note:</strong> ${order.location_note}</p>` : ''}
+        <div class="divider"></div>
+        ${order.order_items
+          .map(
+            (i) => `
+          <div class="item">
+            <span><strong>${i.quantity}x</strong> ${i.menu_item?.name || 'Item'}</span>
+            <span>$${(i.unit_price * i.quantity).toFixed(2)}</span>
           </div>
-
-          {/* Location note pill */}
-          <div className="bg-ember/10 text-ember px-2.5 py-1.5 rounded-lg text-xs font-mono flex items-start gap-1.5 border border-ember/20">
-            <MapPin className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-            <span className="leading-tight font-medium">
-              {order.location_note || 'Outdoor GPS location'}
-            </span>
-          </div>
+          ${i.selected_modifiers?.map((m) => `<div style="font-size:11px; margin-left:10px;">+ ${m.name}</div>`).join('') || ''}
+          ${i.notes ? `<div class="note">* ${i.notes}</div>` : ''}
+        `
+          )
+          .join('')}
+        <div class="divider"></div>
+        <div class="item">
+          <strong>TOTAL</strong>
+          <strong>$${order.total.toFixed(2)}</strong>
         </div>
-      );
-    }
+        <div class="footer">Thank you for dining with us!</div>
+      </body>
+      </html>
+    `;
 
-    // Pickup fallback per Section 9.4
-    return (
-      <div className="bg-paper text-ink px-2.5 py-1.5 rounded-lg text-xs font-mono flex items-start gap-1.5 border border-paper-dim">
-        <ShoppingBag className="w-3.5 h-3.5 text-muted shrink-0 mt-0.5" />
-        <span className="leading-tight font-medium">
-          Pickup: {order.location_note || 'Counter pickup'}
-        </span>
-      </div>
-    );
+    if (typeof window !== 'undefined' && (window as any).electronAPI?.printTicket) {
+      (window as any).electronAPI.printTicket(ticketHtml);
+    } else {
+      const printWin = window.open('', '_blank');
+      if (printWin) {
+        printWin.document.write(ticketHtml);
+        printWin.document.close();
+        printWin.focus();
+        printWin.print();
+      }
+    }
   };
 
   return (
-    <div className="ticket-torn-top rounded-b-2xl shadow-md border border-paper-dim flex flex-col overflow-hidden bg-white hover:shadow-lg transition-shadow">
-      {/* Ticket Header */}
-      <div className="p-4 bg-white border-b border-paper-dim">
-        <div className="flex items-center justify-between">
-          <span className="font-mono text-base font-bold text-ink tracking-wider">
-            #{order.id.slice(-6).toUpperCase()}
-          </span>
-          <span className="flex items-center gap-1 font-mono text-xs text-muted">
-            <Clock className="w-3.5 h-3.5" /> {timeFormatted}
-          </span>
+    <div className="bg-white rounded-2xl border border-paper-dim shadow-md hover:shadow-lg transition-all duration-200 overflow-hidden relative font-sans flex flex-col justify-between">
+      {/* Perforated / Torn edge visual effect at top (Section 9.4) */}
+      <div className="ticket-torn-top bg-white border-t border-paper-dim" />
+
+      {/* Main Ticket Content */}
+      <div className="p-4 space-y-3.5">
+        {/* Header: Monospace Order ID + Elapsed Timestamp */}
+        <div className="flex items-center justify-between pb-2.5 border-b border-paper-dim/80">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-sm font-bold text-ink bg-paper px-2 py-0.5 rounded-md tracking-wider">
+              #{order.id.slice(-6).toUpperCase()}
+            </span>
+            <button
+              onClick={handlePrintTicket}
+              className="p-1 rounded hover:bg-paper text-muted hover:text-ink transition-colors"
+              title="Print Kitchen Ticket"
+            >
+              <Printer className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <div className="flex items-center gap-1 font-mono text-xs text-muted">
+            <Clock className="w-3.5 h-3.5" />
+            <span>{formatElapsed(order.created_at)}</span>
+          </div>
         </div>
 
-        <div className="flex items-center justify-between mt-1.5">
-          <span className="font-serif text-lg font-bold text-ink">
-            {order.customer_name}
-          </span>
-          {order.customer_phone && (
-            <span className="font-mono text-xs text-muted">
-              {order.customer_phone}
-            </span>
+        {/* Location Badge (Section 9.4) */}
+        <div>
+          {order.order_type === 'dine_in_table' && order.table && (
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sage-dim text-sage font-medium text-xs">
+              <Table2 className="w-3.5 h-3.5" />
+              <span>{order.table.label}</span>
+            </div>
+          )}
+
+          {order.order_type === 'outdoor_gps' && (
+            <div className="space-y-1.5">
+              {/* Map Thumbnail for Outdoor GPS Orders (Section 9.4) */}
+              <div className="h-16 rounded-xl bg-paper-dim/60 border border-paper-dim flex items-center justify-center relative overflow-hidden group">
+                <div className="absolute inset-0 opacity-20 bg-[radial-gradient(#C1432E_1px,transparent_1px)] [background-size:8px_8px]" />
+                <div className="flex items-center gap-1 text-[11px] font-mono text-ink bg-white/90 px-2 py-1 rounded-md shadow-sm z-10">
+                  <MapPin className="w-3.5 h-3.5 text-ember animate-bounce" />
+                  <span>
+                    {order.latitude?.toFixed(4)}, {order.longitude?.toFixed(4)}
+                  </span>
+                </div>
+              </div>
+
+              {order.location_note && (
+                <div className="px-2.5 py-1.5 rounded-lg bg-paper border border-paper-dim text-xs text-ink font-medium leading-tight">
+                  <span className="text-[10px] font-mono uppercase text-muted block">
+                    Outdoor Landmark:
+                  </span>
+                  {order.location_note}
+                </div>
+              )}
+            </div>
+          )}
+
+          {order.order_type === 'pickup' && (
+            <div className="px-2.5 py-1.5 rounded-lg bg-paper border border-paper-dim text-xs text-ink font-medium">
+              <span className="text-[10px] font-mono uppercase text-muted block">
+                Pickup Description:
+              </span>
+              {order.location_note || 'Customer pickup at counter'}
+            </div>
           )}
         </div>
-      </div>
 
-      {/* Ticket Location Badge Section (Section 9.4) */}
-      <div className="px-4 py-3 bg-paper/40 border-b border-paper-dim">
-        {renderLocationBadge()}
-      </div>
+        {/* Customer Info */}
+        <div className="flex items-center justify-between text-xs text-muted font-medium pt-1">
+          <div className="flex items-center gap-1.5">
+            <User className="w-3.5 h-3.5 text-ink" />
+            <span className="text-ink font-semibold">{order.customer_name}</span>
+          </div>
+          {order.customer_phone && (
+            <div className="flex items-center gap-1 font-mono text-[11px]">
+              <Phone className="w-3 h-3" />
+              <span>{order.customer_phone}</span>
+            </div>
+          )}
+        </div>
 
-      {/* Ticket Item List with receipt typography (Section 9.4) */}
-      <div className="p-4 space-y-3 flex-1">
+        {/* Dashed Separator */}
+        <div className="border-t border-dashed border-paper-dim my-2" />
+
+        {/* Line Items List */}
         <div className="space-y-2.5">
-          {order.order_items.map((item) => (
-            <div key={item.id} className="text-sm">
+          {order.order_items.map((item, idx) => (
+            <div key={item.id || idx} className="text-xs space-y-0.5">
               <div className="flex items-start justify-between">
-                <span className="font-mono text-ink">
-                  <span className="font-bold mr-2">{item.quantity}x</span>
-                  <span className="font-sans font-medium">{item.menu_item.name}</span>
+                <span className="font-medium text-ink flex items-baseline gap-1.5">
+                  <span className="font-mono font-bold text-sm text-ember">
+                    {item.quantity}×
+                  </span>
+                  <span className="text-sm font-semibold">
+                    {item.menu_item?.name || 'Menu Item'}
+                  </span>
                 </span>
-                <span className="font-mono text-xs text-muted ml-2">
+                <span className="font-mono text-muted text-[11px]">
                   ${(item.unit_price * item.quantity).toFixed(2)}
                 </span>
               </div>
 
-              {/* Modifiers line */}
+              {/* Modifiers List */}
               {item.selected_modifiers && item.selected_modifiers.length > 0 && (
-                <div className="pl-6 text-xs font-mono text-muted space-y-0.5">
-                  {item.selected_modifiers.map((mod, idx) => (
-                    <div key={idx}>+ {mod.name}</div>
+                <div className="pl-6 space-y-0.5">
+                  {item.selected_modifiers.map((mod, mIdx) => (
+                    <div
+                      key={mIdx}
+                      className="text-[11px] font-mono text-muted flex items-center gap-1"
+                    >
+                      <span className="text-ember">+</span>
+                      <span>{mod.name}</span>
+                      {mod.price_delta > 0 && (
+                        <span>(+${mod.price_delta.toFixed(2)})</span>
+                      )}
+                    </div>
                   ))}
                 </div>
               )}
 
-              {/* Item Note */}
+              {/* Special Item Kitchen Note in Ember (Section 9.4) */}
               {item.notes && (
-                <div className="pl-6 text-xs text-ember italic">
-                  Note: {item.notes}
+                <div className="pl-6 pt-0.5">
+                  <p className="text-xs font-mono font-medium text-ember bg-ember/5 px-2 py-0.5 rounded border border-ember/20 inline-block">
+                    Note: {item.notes}
+                  </p>
                 </div>
               )}
             </div>
           ))}
         </div>
 
-        {/* Customer Note in ember text beneath item list per Section 9.4 */}
-        {order.location_note && order.order_type !== 'outdoor_gps' && (
-          <div className="border-t border-dashed border-paper-dim pt-2 mt-2">
-            <p className="text-xs font-mono text-ember font-medium leading-tight">
-              ⚠️ Note: {order.location_note}
-            </p>
-          </div>
-        )}
-      </div>
+        {/* Dashed Separator */}
+        <div className="border-t border-dashed border-paper-dim my-2" />
 
-      {/* Dashed Rule separating item list from footer per Section 9.4 */}
-      <div className="border-t border-dashed border-paper-dim" />
-
-      {/* Ticket Footer & Single Action Button per Section 9.4 */}
-      <div className="p-4 bg-paper/50 space-y-3">
-        <div className="flex items-center justify-between text-xs font-mono text-muted">
-          <span>Items: {order.order_items.reduce((sum, i) => sum + i.quantity, 0)}</span>
-          <span className="font-bold text-ink text-sm">${order.total.toFixed(2)}</span>
+        {/* Order Total */}
+        <div className="flex items-center justify-between text-xs font-mono font-semibold text-ink pt-1">
+          <span>Order Total:</span>
+          <span className="text-sm font-bold">${order.total.toFixed(2)}</span>
         </div>
-
-        {/* Exactly one full-width action button matching column color per Section 9.4 */}
-        {nextStatus && (
-          <button
-            onClick={() => onAdvanceStatus(order.id, nextStatus)}
-            disabled={isUpdating}
-            className={`w-full py-3 px-4 rounded-xl text-xs font-mono font-bold tracking-wide uppercase shadow transition-all active:scale-[0.99] flex items-center justify-center gap-2 ${buttonClass} disabled:opacity-50`}
-          >
-            <span>{buttonLabel}</span>
-            <ArrowRight className="w-4 h-4" />
-          </button>
-        )}
       </div>
+
+      {/* Footer Action Button Matching Column Color (Section 9.4) */}
+      {currentAction && (
+        <div className="p-3 bg-paper border-t border-paper-dim">
+          <button
+            onClick={() => onAdvanceStatus(order.id, currentAction.next)}
+            disabled={isUpdating}
+            className={`w-full py-2.5 px-3 rounded-xl font-medium text-xs flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-[0.99] disabled:opacity-50 ${currentAction.color}`}
+          >
+            {isUpdating ? (
+              <span>Updating...</span>
+            ) : (
+              <>
+                <span>{currentAction.label}</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </>
+            )}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

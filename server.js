@@ -3,12 +3,22 @@ const { parse } = require('url');
 const next = require('next');
 const { Server } = require('socket.io');
 
+// Fallback environment configurations for standalone/desktop execution
+if (!process.env.DATABASE_URL) {
+  const pgPort = process.env.PGPORT || '5432';
+  process.env.DATABASE_URL = `postgresql://postgres:postgres@localhost:${pgPort}/restaurant_db?pgbouncer=true`;
+}
+if (!process.env.JWT_SECRET) {
+  process.env.JWT_SECRET = 'restaurant_ordering_system_jwt_secret_key_2026_super_secure';
+}
+
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = 'localhost';
 const port = parseInt(process.env.PORT || '3000', 10);
 
 async function start() {
-  const app = next({ dev, hostname, port });
+  // Ensure dir is set to __dirname so packaged asar/production builds locate .next properly
+  const app = next({ dev, dir: __dirname, hostname, port });
   const handle = app.getRequestHandler();
 
   await app.prepare();
@@ -66,7 +76,7 @@ async function start() {
     });
   }
 
-  httpServer.listen(port, (err) => {
+  httpServer.listen(port, '0.0.0.0', (err) => {
     if (err) throw err;
     console.log(`> Restaurant Ordering System server ready on http://${hostname}:${port}`);
     console.log(`> Real-time WebSocket layer active`);

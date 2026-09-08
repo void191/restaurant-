@@ -27,6 +27,17 @@
       "!dist-electron",
       "!.git"
     ],
+    "extraResources": [
+      {
+        "from": "data/pg_live",
+        "to": "data/pg_live",
+        "filter": [
+          "**/*",
+          "!*.pid",
+          "!*.lock"
+        ]
+      }
+    ],
     "win": {
       "target": [
         {
