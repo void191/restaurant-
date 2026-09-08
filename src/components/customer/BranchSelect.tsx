@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { MapPin, Navigation, Clock, Phone, ChevronRight } from 'lucide-react';
 import { calculateDistance } from '@/lib/geo';
+import { FALLBACK_BRANCHES } from '@/lib/fallback-data';
 
 export interface Branch {
   id: string;
@@ -22,11 +23,16 @@ interface BranchSelectProps {
 }
 
 export default function BranchSelect({ branches, onSelectBranch }: BranchSelectProps) {
+  // Always use fallback branches if branches array is empty
+  const activeBranches = branches && branches.length > 0 ? branches : (FALLBACK_BRANCHES as unknown as Branch[]);
+
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [locationStatus, setLocationStatus] = useState<'prompt' | 'granted' | 'denied'>('prompt');
-  const [sortedBranches, setSortedBranches] = useState<Branch[]>(branches);
+  const [sortedBranches, setSortedBranches] = useState<Branch[]>(activeBranches);
 
   useEffect(() => {
+    const list = branches && branches.length > 0 ? branches : (FALLBACK_BRANCHES as unknown as Branch[]);
+
     if ('geolocation' in navigator) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
@@ -36,7 +42,7 @@ export default function BranchSelect({ branches, onSelectBranch }: BranchSelectP
           setLocationStatus('granted');
 
           // Sort branches by distance
-          const withDist = branches.map((b) => ({
+          const withDist = list.map((b) => ({
             ...b,
             distance: calculateDistance(lat, lng, b.latitude, b.longitude),
           }));
@@ -45,13 +51,13 @@ export default function BranchSelect({ branches, onSelectBranch }: BranchSelectP
         },
         () => {
           setLocationStatus('denied');
-          setSortedBranches(branches);
+          setSortedBranches(list);
         },
         { enableHighAccuracy: true, timeout: 6000 }
       );
     } else {
       setLocationStatus('denied');
-      setSortedBranches(branches);
+      setSortedBranches(list);
     }
   }, [branches]);
 

@@ -24,7 +24,15 @@ export default function LoginPage() {
         body: JSON.stringify({ email, password }),
       });
 
-      const data = await res.json();
+      let data: any = {};
+      const contentType = res.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        data = await res.json();
+      } else {
+        const text = await res.text();
+        console.error('Non-JSON response from login:', text);
+        throw new Error('Unable to connect to login service. Please check your credentials.');
+      }
 
       if (!res.ok) {
         throw new Error(data.error || 'Invalid credentials');
@@ -53,7 +61,14 @@ export default function LoginPage() {
         body: JSON.stringify({ email: demoEmail, password: demoPass }),
       });
 
-      const data = await res.json();
+      let data: any = {};
+      const contentType = res.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        data = await res.json();
+      } else {
+        throw new Error('Unable to authenticate with demo credentials');
+      }
+
       if (!res.ok) throw new Error(data.error || 'Login failed');
 
       router.push('/');
